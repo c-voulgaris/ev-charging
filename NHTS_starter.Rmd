@@ -328,7 +328,7 @@ race_shares_tibble2 %>%
                                "darkseagreen4",
                                "gray85")) +
   scale_y_continuous(name = 
-            "Percent of vehicles by household race/ethnicity",
+"Percent of vehicles by vehicle type\n(gas-powered vehicles not shown)",
             breaks = breaks <- seq(0, 6, by = 0.5),
             labels = paste(breaks, "%", sep = "")) +
   scale_x_discrete(labels = c("Non-Hispanic\nwhite",
