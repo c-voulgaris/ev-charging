@@ -1,0 +1,339 @@
+---
+title: "Starter Code For NHTS Analysis"
+author: "Carole Voulgaris"
+date: "11/19/2020"
+output: 
+  html_document:
+    theme: cosmo
+    toc: true
+    toc_depth: 3
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+The purpose of this document is demonstrate some methods that will be useful to load data from the National Household Travel Survey (NHTS), apply survey weights, calculate descriptive statistics, and generate informative tables.
+
+## Load libraries
+
+We'll be using the following libraries for this analysis.
+
+```{r load libraries, message=FALSE}
+library(tidyverse)
+library(survey)
+library(srvyr)
+library(treemapify)
+library(knitr)
+```
+
+## Load NHTS Data
+
+I've already downloaded the NHTS 2017 csv files from [https://nhts.ornl.gov/](https://nhts.ornl.gov/){target="_blank"} and extracted the contents to a folder called "NHTS_data" in my project directory. 
+
+There are four data files included in my NHTS_data folder now. 
+
+* The household file (hhpub.csv) includes household-level data
+* The person file (perpub.csv) includes person-level data
+* The trip file (trippub.csv) includes trip-level data
+* The vehicle file (vehpub.csv) includes vehicle-level data
+
+The NHTS_data folder is not included in this repo (it's listed in the .gitignore file), so you'll need to create that folder in your local working directory, download the data files, and save them there.
+
+You can find a list of the variables in each of these files in the [2017 NHTS Codebook](https://nhts.ornl.gov/assets/codebook_v1.2.pdf){target="_blak"}.
+
+A lot (and perhaps all) of the information we need will be in the vehicle file, so we'll start by just loading that one. This dataset includes 60 different variables and I don't need all of them, so immediately upon loading the variables, I'll select the columns I want to keep:
+
+* HOUSEID: An ID number to for the household that owns the vehicle
+* FUELTYPE: Indicate whether the the vehicle uses gas, diesel, or an alternative fuel/battery.
+* HFUEL: Indicates whether the vehicle is fully electric, hybrid, or uses an alternative fuel type.
+* HHFAMINC: The household income
+* HH_HISP: Whether the survey respondent is Hispanic
+* HH_RACE: The primary race of the survey respondent
+* WTHHFIN: The household weight (more on that in the next section)
+
+The HHFAMINC variable is a categorical variable indicating what range of values the household income falls within - I'll convert that to a continuous variable (in thousands of dollars) based on the midpoints of those income categories (so the value for the highest category of incomes greater than $200k is pretty much arbitrary). 
+
+I'll also combine the HH_HISP and HH_RACE variables into a single race/ethnicity variable.
+
+Similarly, I'll combine the two fuel type variables into a single, more legible variable.
+
+Finally, I'll create a binary variable indicating whether the vehicle is fully electric.
+
+```{r load vehicle data, message=FALSE}
+vehs <- read_csv("NHTS_data/vehpub.csv") %>%
+  select(HOUSEID, FUELTYPE, HFUEL, HHFAMINC, 
+         HH_HISP, HH_RACE, WTHHFIN) %>%
+  mutate(income_k = case_when(HHFAMINC == "01" ~ 5,
+                              HHFAMINC == "02" ~ 12.5,
+                              HHFAMINC == "03" ~ 20,
+                              HHFAMINC == "04" ~ 30,
+                              HHFAMINC == "05" ~ 42.5,
+                              HHFAMINC == "06" ~ 62.5,
+                              HHFAMINC == "07" ~ 87.5,
+                              HHFAMINC == "08" ~ 112.5,
+                              HHFAMINC == "09" ~ 137.5,
+                              HHFAMINC == "10" ~ 175,
+                              HHFAMINC == "11" ~ 250,
+                              TRUE ~ -1)) %>%
+  mutate(race_eth = case_when(HH_HISP == "01" ~ "Hispanic",
+                              HH_RACE == "01" ~ "NH_white",
+                              HH_RACE == "02" ~ "NH_Black",
+                              HH_RACE == "03" ~ "NH_Asian",
+                              TRUE ~ "Other")) %>%
+  mutate(type = case_when(FUELTYPE == "01" ~ "Gas",
+                          FUELTYPE == "02" ~ "Diesel",
+                          HFUEL == "01" ~ "Biodiesel",
+                          HFUEL == "02" ~ "Plug-in hybrid",
+                          HFUEL == "03" ~ "Fully electric",
+                          HFUEL == "04" ~ "Hybrid",
+                          TRUE ~ "Other")) %>%
+  mutate(ev = HFUEL == "03")
+```
+
+## Apply survey weights
+
+Some households may be more likely than others to respond to a survey, so our sample is not necessarily representative. We can account for this by applying survey weights, so that responses from households that are most likely to have been undersampled are weighted more heavily.
+
+To incorporate these weights, we'll create a survey object and that will form the basis of our descriptive statistics
+
+```{r Create survey}
+vehs_svy <- vehs %>%
+  as_survey(HOUSEID, weight = WTHHFIN)
+```
+
+## Calculate and summarize descriptive statistics
+
+I'm going to create some tables and figures to summarize the dataset.
+
+### Share of electric vehicles
+
+I'd like to calculate what share of vehicles are electric vehicles.
+
+```{r ev shares}
+ev_shares_list <- svytable(~type, vehs_svy)
+
+ev_shares_tibble <- tibble(`Type of vehicle` = 
+                             factor(names(ev_shares_list),
+                                    levels = c("Gas",
+                                               "Diesel",
+                                               "Biodiesel",
+                                               "Hybrid",
+                                               "Plug-in hybrid",
+                                               "Fully electric",
+                                               "Other")), 
+                           `Number of vehicles` =
+                                as.numeric(round(ev_shares_list,0)),
+                           `Percent of total` = paste(
+                             round((ev_shares_list / 
+                                      sum(ev_shares_list)) * 100, 2),
+                             "%", sep = "")) %>%
+  arrange(`Type of vehicle`)
+
+kable(ev_shares_tibble, 
+      format.args = list(big.mark = ","),
+      align = "lrr")
+
+```
+
+Now I'll visualize those results with a tree map.
+
+```{r}
+ggplot(ev_shares_tibble, aes(area = `Number of vehicles`, 
+                             fill = `Type of vehicle`)) +
+  geom_treemap(color = "white") +
+  scale_fill_manual(values = c("gray10",
+                               "gray25",
+                               "gray40",
+                               "gray55",
+                               "gray70",
+                               "darkseagreen4",
+                               "gray85"))
+
+```
+
+### Income by vehicle type
+
+Now I'd like to see how the median income varies by vehicle type.
+
+```{r, warning=FALSE}
+income_summary <- vehs_svy %>%
+  group_by(type) %>%
+  summarize(mean_inc = survey_mean(income_k),
+            med_inc = survey_quantile(income_k, 0.5)) %>%
+  mutate(type = factor(type, levels = c("Gas",
+                                        "Diesel",
+                                        "Biodiesel",
+                                        "Hybrid",
+                                        "Plug-in hybrid",
+                                        "Fully electric",
+                                        "Other"))) %>%
+  arrange(type)
+
+colnames(income_summary) <- c("Type of vehicle",
+                    "Average owner's household income (thousands)",
+                    "Standard error of average",
+                    "Median owner's household income (thousands)",
+                    "Standard error of median")
+
+kable(income_summary, align = "lrrrr", digits = 1)
+```
+
+Now I'd like to visualize those results with a bar graph.
+
+```{r}
+ggplot(income_summary, aes(x = `Type of vehicle`,
+      y = `Average owner's household income (thousands)`,
+      fill = `Type of vehicle`)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = c("gray10",
+                               "gray25",
+                               "gray40",
+                               "gray55",
+                               "gray70",
+                               "darkseagreen4",
+                               "gray85")) +
+  theme_bw() +
+  theme(legend.position = "none")
+
+```
+
+### Race by vehicle type 
+
+```{r, warning=FALSE}
+race_shares_list <- svytable(~race_eth+type, vehs_svy)
+
+race_shares_tibble <- tibble(
+  `Race/ethnicity` = factor(c(names(race_shares_list[,1]), "Total"),
+                       levels = c("NH_white",
+                                  "NH_Black",
+                                  "NH_Asian",
+                                  "Hispanic",
+                                  "Other",
+                                  "Total")), 
+   Gas = c(round((race_shares_list[,"Gas"] / 
+                              sum(race_shares_list[,"Gas"])) * 
+                   100, 2), 100),
+   Diesel = c(round((race_shares_list[,"Diesel"] / 
+                        sum(race_shares_list[,"Diesel"])) * 
+                      100, 2), 100),
+   Biodiesel = c(round((race_shares_list[,"Biodiesel"] / 
+                        sum(race_shares_list[,"Biodiesel"])) * 
+                         100, 2), 100),
+   Hybrid = c(round((race_shares_list[,"Hybrid"] / 
+                        sum(race_shares_list[,"Hybrid"])) * 
+                      100, 2), 100),
+  `Plug-in hybrid` = c(round((race_shares_list[,"Plug-in hybrid"] / 
+                          sum(race_shares_list[,"Plug-in hybrid"])) *
+                            100, 2), 100),
+  `Fully electric` = c(round((race_shares_list[,"Fully electric"] / 
+                          sum(race_shares_list[,"Fully electric"])) *
+                            100, 2), 100),
+   Other = c(round((race_shares_list[,"Other"] / 
+                          sum(race_shares_list[,"Other"])) *
+                            100, 2), 100)) %>%
+  arrange(`Race/ethnicity`)
+
+kable(race_shares_tibble, digits = 1,
+      caption = "Percent of vehicles owned, by race and type")
+```
+
+Now I'll visualize those results with a bar chart
+
+```{r}
+race_shares_tibble %>%
+  filter(`Race/ethnicity` != "Total") %>%
+  pivot_longer(cols = -`Race/ethnicity`, 
+               names_to = "Type", values_to = "Share") %>%
+  mutate(Type = factor(Type, levels = c("Gas",
+                                        "Diesel",
+                                        "Biodiesel",
+                                        "Hybrid",
+                                        "Plug-in hybrid",
+                                        "Fully electric",
+                                        "Other"))) %>%
+  ggplot(aes(x = `Type`, y = Share, fill = `Race/ethnicity`)) +
+  geom_bar(stat = "identity") +
+  theme_bw() +
+  scale_fill_brewer(type = "qual", palette = "Set3",
+                    labels = c("Non-Hispanic white",
+                               "Non-Hispanic Black",
+                               "Non-Hispanic Asian",
+                               "Hispanic",
+                               "Other")) +
+  scale_y_continuous(name = 
+            "Percent of vehicles by household race/ethnicity",
+            breaks = breaks <- seq(0, 100, by = 10),
+            labels = paste(breaks, "%", sep = ""))
+```
+
+## Vehicle type by race
+
+```{r, warning=FALSE}
+race_shares_tibble2 <- tibble(
+  `Vehicle type` = factor(c(names(race_shares_list[1,]), "Total"),
+                          levels = c("Gas",
+                                     "Diesel",
+                                     "Biodiesel",
+                                     "Hybrid",
+                                     "Plug-in hybrid",
+                                     "Fully electric",
+                                     "Other",
+                                     "Total")), 
+  `Non-Hispanic white` = c(round((race_shares_list["NH_white",] / 
+                        sum(race_shares_list["NH_white",])) * 
+                          100, 2), 100), 
+  `Non-Hispanic Black` = c(round((race_shares_list["NH_Black",] / 
+                        sum(race_shares_list["NH_Black",])) * 
+                          100, 2), 100),
+  `Non-Hispanic Asian` = c(round((race_shares_list["NH_Asian",] / 
+                        sum(race_shares_list["NH_Asian",])) * 
+                          100, 2), 100),
+  Hispanic = c(round((race_shares_list["Hispanic",] / 
+                        sum(race_shares_list["Hispanic",])) * 
+                       100, 2), 100),
+   Other = c(round((race_shares_list["Other",] / 
+                        sum(race_shares_list["Other",])) * 
+                     100, 2), 100)) %>%
+  arrange(`Vehicle type`)
+
+kable(race_shares_tibble2, digits = 1,
+      caption = "Percent of vehicles owned, by type and race")
+```
+
+And I'll visualize those results in a bar chart as well. I'm leaving out gas-powered vehicles so the variation in the other categories is more visible.
+
+```{r}
+race_shares_tibble2 %>%
+  filter(`Vehicle type` != "Total" &
+           `Vehicle type` != "Gas") %>%
+  pivot_longer(cols = -`Vehicle type`, 
+               names_to = "Race/ethnicity", values_to = "Share") %>%
+  mutate(`Race/ethnicity` = factor(`Race/ethnicity`, 
+                                   levels = c("Non-Hispanic white",
+                                              "Non-Hispanic Black",
+                                              "Non-Hispanic Asian",
+                                              "Hispanic",
+                                              "Other"))) %>%
+  ggplot(aes(x = `Race/ethnicity`, y = Share, fill = `Vehicle type`)) +
+  geom_bar(stat = "identity") +
+  theme_bw() +
+  scale_fill_manual(values = c("gray25",
+                               "gray40",
+                               "gray55",
+                               "gray70",
+                               "darkseagreen4",
+                               "gray85")) +
+  scale_y_continuous(name = 
+            "Percent of vehicles by household race/ethnicity",
+            breaks = breaks <- seq(0, 6, by = 0.5),
+            labels = paste(breaks, "%", sep = "")) +
+  scale_x_discrete(labels = c("Non-Hispanic\nwhite",
+                              "Non-Hispanic\nBlack",
+                              "Non-Hispanic\nAsian",
+                              "Hispanic",
+                              "Other"))
+```
