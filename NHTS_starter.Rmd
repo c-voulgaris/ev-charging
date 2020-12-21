@@ -337,3 +337,9 @@ race_shares_tibble2 %>%
                               "Hispanic",
                               "Other"))
 ```
+
+## Quick regression example
+
+```{r regression}
+
+```
