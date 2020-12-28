@@ -1,0 +1,127 @@
+---
+title: "NHTS Descriptive Statistics_HH_CGRiffeth"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Libraries
+
+Loading my libraries.
+
+```{r libraries}
+library(tidyverse)
+library(survey)
+library(srvyr)
+library(treemapify)
+library(knitr)
+```
+
+## Loading NHTS Data - Household
+
+Loading variables from the NHTS household characteristics file.
+One record per household unit.
+
+* CAR = Frequency of Personal Vehicle Use for Travel
+* CENSUS_D = 2010 Census division classification for the respondent's home address
+* HBHTNRNT = Category of the percent of renter-occupied housing in the census block group of the household's home location
+* HHSIZE = Count of household members
+* HHSTATE = Household state
+* HOMEOWN = Home Ownership
+* PARA = Frequency of Paratransit Use for Travel
+* PLACE = Travel is a Financial Burden
+* PRICE = Price of Gasoline Affects Travel
+
+```{r NHTS Data}
+pers <- read_csv("NHTS_data/hhpub.csv") %>%
+  select(HOUSEID, CAR, CENSUS_D, HBHTNRNT, HOMEOWN, PARA, PLACE, PRICE) %>%
+  mutate(car_use = case_when(CAR == "01" ~ "Daily",
+                             CAR == "02" ~ "A Few Times a Week",
+                             CAR == "03" ~ "A Few Times a Month",
+                             CAR == "04" ~ "A Few Times a Year",
+                             CAR == "05" ~ "Never",
+                             TRUE ~ "Other")) %>%
+  mutate(region = case_when(CENSUS_D == "01" ~ "New England",
+                            CENSUS_D == "02" ~ "Middle Atlantic",
+                            CENSUS_D == "03" ~ "East North Central",
+                            CENSUS_D == "04" ~ "West North Central",
+                            CENSUS_D == "05" ~ "South Atlantic",
+                            CENSUS_D == "06" ~ "East South Central",
+                            CENSUS_D == "07" ~ "West South Central",
+                            CENSUS_D == "08" ~ "Mountain",
+                            CENSUS_D == "09" ~ "Pacific",
+                            TRUE ~ "Other")) %>%
+  mutate(rent_hh = case_when(HBHTNRNT == "0" ~ 0,
+                             HBHTNRNT == "05" ~ 10,
+                             HBHTNRNT == "20" ~ 20,
+                             HBHTNRNT == "30" ~ 30,
+                             HBHTNRNT == "40" ~ 40,
+                             HBHTNRNT == "50" ~ 50,
+                             HBHTNRNT == "60" ~ 60,
+                             HBHTNRNT == "70" ~ 70,
+                             HBHTNRNT == "80" ~ 80,
+                             HBHTNRNT == "90" ~ 90,
+                             HBHTNRNT == "95" ~ 97,
+                             TRUE ~ -1)) %>%
+  mutate(own_hh = case_when(HOMEOWN == "01" ~ "Own",
+                            HOMEOWN == "02" ~ "Rent",
+                            TRUE ~ -"Other")) %>%
+  mutate(paratransit_use = case_when(PARA == "01" ~ "Daily",
+                                     PARA == "02" ~ "A Few Times a Week",
+                                     PARA == "03" ~ "A Few Times a Month",
+                                     PARA == "04" ~ "A Few Times a Year",
+                                     PARA == "05" ~ "Never",
+                                     TRUE ~ "Other")) %>%
+  mutate(finan_burden = case_when(PLACE == "01" ~ "Strongly Agree",
+                                  PLACE == "02" ~ "Agree",
+                                  PLACE == "03" ~ "Neither Agree nor Disagree",
+                                  PLACE == "04" ~ "Disagree",
+                                  PLACE == "05" ~ "Strongly Disagree",
+                                  TRUE ~ "Other")) %>%
+  mutate(fuel_burden = case_when(PRICE == "01" ~ "Strongly Agree",
+                                 PRICE == "02" ~ "Agree",
+                                 PRICE == "03" ~ "Neither Agree nor Disagree",
+                                 PRICE == "04" ~ "Disagree",
+                                 PRICE == "05" ~ "Strongly Disagree",
+                                 TRUE ~ "Other"))
+rlang::last_error()
+```
+
+## Survey Weights
+
+``` {r survey weights}
+pers_svy <- pers %>%
+  as_survey(HOUSEID, weight = WTHHFIN)
+  as_survey(HHRESP, weight = WTPERFIN)
+  as_survey(TDCASEID, weight = WTTRDFIN)
+```
+
+## Descriptive Statistics
+
+``` {r descriptstats}
+ev_shares_list <- svytable(~type, vehs_svy)
+
+ev_shares_tibble <- tibble(`Type of vehicle` = 
+                             factor(names(ev_shares_list),
+                                    levels = c("Gas",
+                                               "Diesel",
+                                               "Biodiesel",
+                                               "Hybrid",
+                                               "Plug-in hybrid",
+                                               "Fully electric",
+                                               "Other")), 
+                           `Number of vehicles` =
+                                as.numeric(round(ev_shares_list,0)),
+                           `Percent of total` = paste(
+                             round((ev_shares_list / 
+                                      sum(ev_shares_list)) * 100, 2),
+                             "%", sep = "")) %>%
+  arrange(`Type of vehicle`)
+
+kable(ev_shares_tibble, 
+      format.args = list(big.mark = ","),
+      align = "lrr")
+```
+

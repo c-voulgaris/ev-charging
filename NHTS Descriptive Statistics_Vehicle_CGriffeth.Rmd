@@ -1,0 +1,129 @@
+---
+title: "NHTS Descriptive Statistics_Vehicle_CGRiffeth"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Libraries
+
+Loading my libraries.
+
+```{r libraries}
+library(tidyverse)
+library(survey)
+library(srvyr)
+library(treemapify)
+library(knitr)
+```
+
+## Loading NHTS Data - Vehicle
+
+Loading variables from the NHTS household vehicle characteristics file.
+One record per household vehicle, if vehicle is present.
+
+The following are continuous rather than categorical variables: BESTMILE, VEHAGE.
+
+* HHFAMINC = Household income
+* HH_HISP = Hispanic status of household respondent
+* HH_RACE = Race of household respondent
+* FUELTYPE = Fuel Type
+* HFUEL = Type of Hybrid Vehicle
+* BESTMILE = Best estimate of annual miles
+* CENSUS_D = 2010 Census division classification for the respondent's home address
+* HBHTNRNT = Category of the percent of renter-occupied housing in the census block group of the household's home location
+* HHSIZE = Count of household members
+* HHSTATE = Household state
+* HOMEOWN = Home Ownership
+* VEHAGE = Age of vehicle, based on model year
+* VEHTYPE = Vehicle Type
+
+```{r NHTS Data}
+vehs <- read_csv("NHTS_data/vehpub.csv") %>%
+  select(HOUSEID, HHFAMINC, HH_HISP, HH_RACE, FUELTYPE, 
+         HFUEL, BESTMILE, CENSUS_D, HBHTNRNT, HHSIZE, 
+         HOMEOWN, VEHAGE, VEHTYPE) %>%
+  mutate(income_k = case_when(HHFAMINC == "01" ~ 5,
+                              HHFAMINC == "02" ~ 12.5,
+                              HHFAMINC == "03" ~ 20,
+                              HHFAMINC == "04" ~ 30,
+                              HHFAMINC == "05" ~ 42.5,
+                              HHFAMINC == "06" ~ 62.5,
+                              HHFAMINC == "07" ~ 87.5,
+                              HHFAMINC == "08" ~ 112.5,
+                              HHFAMINC == "09" ~ 137.5,
+                              HHFAMINC == "10" ~ 175,
+                              HHFAMINC == "11" ~ 250,
+                              TRUE ~ -1)) %>%
+  mutate(race_eth = case_when(HH_HISP == "01" ~ "Hispanic",
+                              HH_RACE == "01" ~ "NH_white",
+                              HH_RACE == "02" ~ "NH_Black",
+                              HH_RACE == "03" ~ "NH_Asian",
+                              TRUE ~ "Other")) %>%
+  mutate(type = case_when(FUELTYPE == "01" ~ "Gas",
+                          FUELTYPE == "02" ~ "Diesel",
+                          HFUEL == "01" ~ "Biodiesel",
+                          HFUEL == "02" ~ "Plug-in hybrid",
+                          HFUEL == "03" ~ "Fully electric",
+                          HFUEL == "04" ~ "Hybrid",
+                          TRUE ~ "Other")) %>%
+  mutate(ev = HFUEL == "03")
+  mutate(region = case_when(CENSUS_D == "01" ~ "New England",
+                            CENSUS_D == "02" ~ "Middle Atlantic",
+                            CENSUS_D == "03" ~ "East North Central",
+                            CENSUS_D == "04" ~ "West North Central",
+                            CENSUS_D == "05" ~ "South Atlantic",
+                            CENSUS_D == "06" ~ "East South Central",
+                            CENSUS_D == "07" ~ "West South Central",
+                            CENSUS_D == "08" ~ "Mountain",
+                            CENSUS_D == "09" ~ "Pacific",
+                            TRUE ~ "Other")) %>%
+  mutate(rent_hh = case_when(HBHTNRNT == "0" ~ 0,
+                             HBHTNRNT == "05" ~ 10,
+                             HBHTNRNT == "20" ~ 20,
+                             HBHTNRNT == "30" ~ 30,
+                             HBHTNRNT == "40" ~ 40,
+                             HBHTNRNT == "50" ~ 50,
+                             HBHTNRNT == "60" ~ 60,
+                             HBHTNRNT == "70" ~ 70,
+                             HBHTNRNT == "80" ~ 80,
+                             HBHTNRNT == "90" ~ 90,
+                             HBHTNRNT == "95" ~ 97,
+                             TRUE ~ -1)) %>%
+  mutate(hh_size = case_when(HHSIZE == "1" ~ 1,
+                             HHSIZE == "2" ~ 2,
+                             HHSIZE == "3" ~ 3,
+                             HHSIZE == "4" ~ 4,
+                             HHSIZE == "5" ~ 5,
+                             HHSIZE == "6" ~ 6,
+                             HHSIZE == "7" ~ 7,
+                             HHSIZE == "8" ~ 8,
+                             HHSIZE == "9" ~ 9,
+                             HHSIZE == "10" ~ 10,
+                             HHSIZE == "11" ~ 11,
+                             HHSIZE == "12" ~ 12,
+                             HHSIZE == "13" ~ 13,
+                             TRUE ~ -1)) %>%
+  mutate(own_hh = case_when(HOMEOWN == "01" ~ "own",
+                            HOMEOWN == "02" ~ "rent",
+                            TRUE ~ "Other")) %>%
+  mutate(veh_type = case_when(VEHTYPE == "01" ~ "Automobile/Car/Station Wagon",
+                              VEHTYPE == "02" ~ "Van (Mini/Cargo/Passenger)",
+                              VEHTYPE == "03" ~ "SUV",
+                              VEHTYPE == "04" ~ "Pickup Truck",
+                              VEHTYPE == "05" ~ "Other Truck",
+                              VEHTYPE == "06" ~ "RV",
+                              VEHTYPE == "07" ~ "Motorcycle",
+                              TRUE ~ "Other"))
+```
+
+##Survey Weights
+
+```{r Create survey}
+vehs_svy <- vehs %>%
+  as_survey(HOUSEID, weight = WTHHFIN)
+  as_survey(HHRESP, weight = WTPERFIN)
+  as_survey(TDCASEID, weight = WTTRDFIN)
+```

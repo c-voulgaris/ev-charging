@@ -1,0 +1,121 @@
+---
+title: "NHTS Descriptive Statistics_Person_CGRiffeth"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Libraries
+
+Loading my libraries.
+
+```{r libraries}
+library(tidyverse)
+library(survey)
+library(srvyr)
+library(treemapify)
+library(knitr)
+```
+
+## Loading NHTS Data - Person
+
+Loading variables from the NHTS household person characteristics file.
+One record per household person.
+
+The following are continuous rather than categorical variables: PTUSED, R_AGE.
+A mutation has not been written for HHSTATE.
+
+* BORNINUS = Born in United States
+* CENSUS_D = 2010 Census division classification for the respondent's home address
+* HBHTNRNT = Category of the percent of renter-occupied housing in the census block group of the household's home location
+* HHSIZE = Count of household members
+* HHSTATE = Household state
+* HOMEOWN = Home Ownership
+* PTUSED = Count of Public Transit Usage
+* R_AGE = Age
+* R_SEX = Gender
+* WRKTRANS = Mode to Work
+* WRK_HOME = Work from Home
+
+```{r NHTS Data}
+hh <- read_csv("NHTS_data/perpub.csv") %>%
+  select(HOUSEID, PERSONID, BORNINUS, CENSUS_D, 
+         HBHTNRNT, HHSIZE, HHSTATE, HOMEOWN, 
+         PTUSED, R_AGE, R_SEX, WRKTRANS, WRK_HOME) %>%
+  mutate(region = case_when(CENSUS_D == "01" ~ "New England",
+                            CENSUS_D == "02" ~ "Middle Atlantic",
+                            CENSUS_D == "03" ~ "East North Central",
+                            CENSUS_D == "04" ~ "West North Central",
+                            CENSUS_D == "05" ~ "South Atlantic",
+                            CENSUS_D == "06" ~ "East South Central",
+                            CENSUS_D == "07" ~ "West South Central",
+                            CENSUS_D == "08" ~ "Mountain",
+                            CENSUS_D == "09" ~ "Pacific",
+                            TRUE ~ "Other")) %>%
+  mutate(rent_hh = case_when(HBHTNRNT == "0" ~ 2,
+                             HBHTNRNT == "05" ~ 10,
+                             HBHTNRNT == "20" ~ 20,
+                             HBHTNRNT == "30" ~ 30,
+                             HBHTNRNT == "40" ~ 40,
+                             HBHTNRNT == "50" ~ 50,
+                             HBHTNRNT == "60" ~ 60,
+                             HBHTNRNT == "70" ~ 70,
+                             HBHTNRNT == "80" ~ 80,
+                             HBHTNRNT == "90" ~ 90,
+                             HBHTNRNT == "95" ~ 97,
+                             TRUE ~ -1)) %>%
+  mutate(hh_size = case_when(HHSIZE == "1" ~ 1,
+                             HHSIZE == "2" ~ 2,
+                             HHSIZE == "3" ~ 3,
+                             HHSIZE == "4" ~ 4,
+                             HHSIZE == "5" ~ 5,
+                             HHSIZE == "6" ~ 6,
+                             HHSIZE == "7" ~ 7,
+                             HHSIZE == "8" ~ 8,
+                             HHSIZE == "9" ~ 9,
+                             HHSIZE == "10" ~ 10,
+                             HHSIZE == "11" ~ 11,
+                             HHSIZE == "12" ~ 12,
+                             HHSIZE == "13" ~ 13,
+                             TRUE ~ -1)) %>%
+  mutate(own_hh = case_when(HOMEOWN == "01" ~ "own",
+                            HOMEOWN == "02" ~ "rent",
+                            TRUE ~ "Other")) %>%
+  mutate(gender = case_when(R_SEX == "01" ~ "Male",
+                            R_SEX == "02" ~ "Female",
+                            TRUE ~ "Other")) %>%
+  mutate(modeshare = case_when(WRKTRANS == "01" ~ "Walk",
+                               WRKTRANS == "02" ~ "Bicyle",
+                               WRKTRANS == "03" ~ "Car",
+                               WRKTRANS == "04" ~ "SUV",
+                               WRKTRANS == "05" ~ "Van",
+                               WRKTRANS == "06" ~ "Pickup Truck",
+                               WRKTRANS == "07" ~ "Golf car / Segway",
+                               WRKTRANS == "08" ~ "Motorcycle / Moped",
+                               WRKTRANS == "09" ~ "RV",
+                               WRKTRANS == "10" ~ "School bus",
+                               WRKTRANS == "11" ~ "Public or commuter bus",
+                               WRKTRANS == "12" ~ "Paratransit",
+                               WRKTRANS == "13" ~ "Private / Charter / Tour / Shuttle Bus",
+                               WRKTRANS == "14" ~ "City-to-city bus",
+                               WRKTRANS == "15" ~ "Amtrak / Commuter Rail",
+                               WRKTRANS == "16" ~ "Subway / Elevated / Ligtht Rail / Street Car",
+                               WRKTRANS == "17" ~ "Taxi / Limo / Rideshare",
+                               WRKTRANS == "18" ~ "Rental car",
+                               WRKTRANS == "19" ~ "Airplane",
+                               WRKTRANS == "20" ~ "Boat / Ferry / Water taxi",
+                               TRUE ~ "Other")) %>%
+  mutate(wfh = case_when(WRK_HOME == "01" ~ "Yes",
+                         WRK_HOME == "02" ~ "No",
+                         TRUE ~ "Other")) 
+```
+##Survey Weights
+
+```{r Create survey}
+hh_svy <- hh %>%
+  as_survey(HOUSEID, weight = WTHHFIN)
+  as_survey(HHRESP, weight = WTPERFIN)
+  as_survey(TDCASEID, weight = WTTRDFIN)
+```
