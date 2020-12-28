@@ -32,7 +32,7 @@ One record per household unit.
 * HOMEOWN = Home Ownership
 * PARA = Frequency of Paratransit Use for Travel
 * PLACE = Travel is a Financial Burden
-* PRICE = Price of Gasoline Affects Travel
+* PRICE = Price of Gasoline Affects Travel.
 
 ```{r NHTS Data}
 pers <- read_csv("NHTS_data/hhpub.csv") %>%
