@@ -28,6 +28,7 @@ library(survey)
 library(srvyr)
 library(treemapify)
 library(knitr)
+library(jtools)
 ```
 
 ## Load NHTS Data
@@ -79,11 +80,16 @@ vehs <- read_csv("NHTS_data/vehpub.csv") %>%
                               HHFAMINC == "10" ~ 175,
                               HHFAMINC == "11" ~ 250,
                               TRUE ~ -1)) %>%
-  mutate(race_eth = case_when(HH_HISP == "01" ~ "Hispanic",
+  mutate(race_eth = factor(case_when(HH_HISP == "01" ~ "Hispanic",
                               HH_RACE == "01" ~ "NH_white",
                               HH_RACE == "02" ~ "NH_Black",
                               HH_RACE == "03" ~ "NH_Asian",
-                              TRUE ~ "Other")) %>%
+                              TRUE ~ "Other"),
+                           levels = c("NH_white",
+                                      "NH_Black",
+                                      "NH_Asian",
+                                      "Hispanic",
+                                      "Other"))) %>%
   mutate(type = case_when(FUELTYPE == "01" ~ "Gas",
                           FUELTYPE == "02" ~ "Diesel",
                           HFUEL == "01" ~ "Biodiesel",
@@ -340,6 +346,39 @@ race_shares_tibble2 %>%
 
 ## Quick regression example
 
-```{r regression}
+The likelihood that a vehicle will be an electric vehicle.
 
+```{r two-IV regression}
+model1 <- glm(ev ~ income_k + race_eth, 
+              data = vehs, family = "binomial")
+
+summary(model1)
+```
+
+```{r log income}
+model2 <- glm(ev ~ log(income_k) + race_eth, 
+              data = vehs, family = "binomial")
+
+summary(model2)
+```
+
+```{r interaction regression}
+model3 <- glm(ev ~ log(income_k) + race_eth + log(income_k):race_eth, 
+              data = vehs, family = "binomial")
+
+summary(model3)
+```
+```{r results summary}
+coef_names <- c("Income (thousands)" = "income_k",
+                "Income (log-transformed)" = "log(income_k)", 
+                "Non-Hispanic Black (relative to non-Hispanic white)" = 
+                  "race_ethNH_Black",
+                "Asian" = 
+                  "race_ethNH_Asian",
+                "Hispanic" = "race_ethHispanic",
+                "Other race/ethnicity" = "race_ethOther",
+                
+                "Constant" = "(Intercept)")
+
+export_summs(model1, model2, model3, coefs = coef_names)
 ```
