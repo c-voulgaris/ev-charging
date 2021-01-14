@@ -1,0 +1,237 @@
+---
+title: "Starter Code For NHTS Analysis"
+author: "Carole Voulgaris"
+date: "11/19/2020"
+output: 
+  html_document:
+    theme: cosmo
+    toc: true
+    toc_depth: 3
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+The purpose of this document is demonstrate some methods that will be useful to load data from the National Household Travel Survey (NHTS), apply survey weights, calculate descriptive statistics, and generate informative tables.
+
+## Load libraries
+
+We'll be using the following libraries for this analysis.
+
+```{r load libraries, message=FALSE}
+library(tidyverse)
+library(survey)
+library(srvyr)
+library(treemapify)
+library(knitr)
+library(jtools)
+library(interactions)
+```
+
+## Load NHTS Data
+
+I've already downloaded the NHTS 2017 csv files from [https://nhts.ornl.gov/](https://nhts.ornl.gov/){target="_blank"} and extracted the contents to a folder called "NHTS_data" in my project directory. 
+
+There are four data files included in my NHTS_data folder now. 
+
+* The household file (hhpub.csv) includes household-level data
+* The person file (perpub.csv) includes person-level data
+* The trip file (trippub.csv) includes trip-level data
+* The vehicle file (vehpub.csv) includes vehicle-level data
+
+The NHTS_data folder is not included in this repo (it's listed in the .gitignore file), so you'll need to create that folder in your local working directory, download the data files, and save them there.
+
+You can find a list of the variables in each of these files in the [2017 NHTS Codebook](https://nhts.ornl.gov/assets/codebook_v1.2.pdf){target="_blank"}.
+
+For the first part of this example, I'll do a household-level analysis to estimate the likelihood that a vehicle-owning household owns an electric vehicle, based on household income, the presence of a BIPOC in the household, and the average commute time to work among household workers.
+
+I'll need to load or derive the following variables:
+
+* Household survey weight 
+    * Used to calculate descriptive statistics
+    * WTHHFIN in hhpub.csv
+* Household ID
+   * Used to join variables from different files
+   * HOUSEID in all files
+* Presence of a household vehicle
+    * Binary variable used to define the sample
+    * Derived from HHVEHCNT in the hhpub.csv
+* Household income
+    * Independent continuous variable
+    * Derived from HHFAMINC in hhpub.csv
+* Presence of an electric vehicle
+    * Dependent binary variable
+    * Derived from HFUEL in vehpub.csv
+* Presence of a BIPOC in the household
+    * Independent binary variable
+    * Derived from R_HISP and R_RACE in perpub.csv
+* Average commute time to work among household workers
+   * Independent continuous variable
+   * Derived from NOCONG in perpub.csv
+    
+### Load variables from the household file
+
+We'll need four variables from the household file:
+
+* `HOUSEID`
+* `HHVEHCNT` 
+* `HHFAMINC` 
+* `WTHHFIN`
+
+I'll create a binary variable called `has_veh` from HHVEHCNT to indicate whether the household has any vehicles, and I'll create a continuous variable called `income_k` indicating the household income in thousands, based on the midpoints of the categories in the categorical `HHFAMINC` variable. Once I've created those new variables, I'll drop the variables I used to derive them, and I'll also drop the rows for households that don't own any vehicles.
+
+```{r load hh data, message=FALSE}
+hhs <- read_csv("NHTS_data/hhpub.csv") %>%
+  select(HOUSEID, HHVEHCNT, HHFAMINC, WTHHFIN) %>%
+  mutate(income_k = case_when(HHFAMINC == "01" ~ 5,
+                              HHFAMINC == "02" ~ 12.5,
+                              HHFAMINC == "03" ~ 20,
+                              HHFAMINC == "04" ~ 30,
+                              HHFAMINC == "05" ~ 42.5,
+                              HHFAMINC == "06" ~ 62.5,
+                              HHFAMINC == "07" ~ 87.5,
+                              HHFAMINC == "08" ~ 112.5,
+                              HHFAMINC == "09" ~ 137.5,
+                              HHFAMINC == "10" ~ 175,
+                              HHFAMINC == "11" ~ 250,
+                              TRUE ~ -1)) %>%
+  mutate(has_veh = HHVEHCNT > 0) %>%
+  select(HOUSEID, has_veh, income_k, WTHHFIN) %>%
+  filter(has_veh)
+```
+
+### Load variables from vehicle file
+
+The only variables I need from the vehicle file are `HOUSEID` and `HFUEL`. I'll use `HFUEL` to create a binary variable called `is_ev` indicating whether a vehicle is fully electric. Then I'll use `group_by()` and `summarize()` to collapse the dataset to the household level, with a variable called `has_ev` indicating whether any of the vehicles in a household are electric.
+
+Then, I'll add those variables to the household file.
+
+```{r load vehicle data, message=FALSE}
+vehs <- read_csv("NHTS_data/vehpub.csv") %>%
+  select(HOUSEID, HFUEL) %>%
+  mutate(is_ev = (HFUEL == "03")) %>%
+  group_by(HOUSEID) %>%
+  summarize(has_ev = max(is_ev))
+
+hhs <- hhs %>%
+  left_join(vehs)
+```
+
+
+### Load variables from person file
+
+I need the following four variables from the person file:
+
+* `HOUSEID`
+* `R_RACE`
+* `R_HISP`
+* `NOCONG`
+
+I'll use R_RACE and R_HISP to create a binary variable indicating whether the person is non-Hispanic white.
+
+`NOCONG` indicates the travel time to work (without traffic), but only for those who commute by private vehicle. To get an average of those, I'll create a second dataframe called `drive_ppl` that only includes those with a value for this variable (i.e. who commute to work in a car), and take the average within each household for that dataset.
+
+Then, I'll collapse the ppl variable to the household level and create a bainary variable called `has_BIPOC` that will only be true if no household members are non-Hispanic white. I'll join the `ppl` and `drive_ppl` dataframes into a single dataframe, which will have missing (NA) values for any households where no one drives to work. I'll replace these missing values with zeros.
+
+Finally, I'll add those variables to the household file.
+
+```{r load person data, message=FALSE}
+ppl <- read_csv("NHTS_data/perpub.csv") %>%
+  select(HOUSEID, R_RACE, R_HISP, WRKTRANS, NOCONG) %>%
+  mutate(is_nh_white = (R_RACE == "01" & R_HISP == "02")) %>%
+  group_by(HOUSEID)
+
+drive_ppl <- ppl %>%
+  filter(NOCONG > 0) %>%
+  summarize(avg_commute = mean(NOCONG))
+
+ppl <- ppl %>%
+  summarize(has_BIPOC = !as.logical(min(is_nh_white))) %>%
+  left_join(drive_ppl) %>%
+  mutate(avg_commute = replace_na(avg_commute, 0))
+
+hhs <- hhs %>%
+  left_join(ppl)
+```
+
+## Descriptive statistics
+
+Before running your regression, you may find it helpful to generate some descriptive statistics. I'm not doing that here in this example, but you can refer to NHTS_starter.html for some useful methods.
+
+### Apply weights
+
+Be sure and apply survey weights before calculating descriptive statistics.
+
+### Percent of households with electric vehicles
+
+Try calculating the percentage of U.S. households that own an electrici vehicle.
+
+## Regression
+
+Let's predict the likelihood that a vehicle-owning household will own an electric vehicle, based on income, the presence of a BIPOC in the household, and the average time household workers commute in a car.
+
+```{r three-IV regression}
+model1 <- glm(has_ev ~ income_k + has_BIPOC + avg_commute, 
+              data = hhs, family = "binomial")
+
+summary(model1)
+```
+
+The effects of income are often logrithmic (i.e. changes happen with percentage increases rather than without absolute increases). Let's see if a log-transformation improves model fit.
+
+```{r log income}
+model2 <- glm(has_ev ~ log(income_k) + has_BIPOC + avg_commute, 
+              data = hhs, family = "binomial")
+
+summary(model2)
+```
+
+Also, I wonder if the effect of income on EV ownership depends on whether there is at least one BIPOC in the household.
+
+```{r interaction regression}
+model3 <- glm(has_ev ~ log(income_k) + has_BIPOC + avg_commute +
+                log(income_k):has_BIPOC, 
+              data = hhs, family = "binomial")
+
+summary(model3)
+```
+
+Let's show the results of those three alternative models in a single table:
+
+```{r results summary}
+coef_names <- c("Income (thousands)" = "income_k",
+                "Income (log-transformed)" = "log(income_k)", 
+                "Presence of BIPOC in household" = 
+                  "has_BIPOCTRUE",
+                "Average driving commute" = "avg_commute",
+                "Interaction: income and BIPOC" = "log(income_k):has_BIPOCTRUE",
+                "Constant" = "(Intercept)")
+
+export_summs(model1, model2, model3, coefs = coef_names)
+```
+
+
+Now let's see how the probability of owning an electric vehicle changes with with income, for households with and without BIPOC.
+
+``` {r interaction figure, message=FALSE, warning=FALSE}
+interact_plot(model3, pred = "income_k", modx = "has_BIPOC", interval = TRUE) +
+  scale_y_continuous(name = "Probability of owning an electric vehicle",
+                     breaks = breaks <- seq(0, 0.04, by = 0.005),
+                     labels = paste(breaks * 100, "%", sep = "")) +
+  scale_x_continuous(name = "Household income",
+                     breaks= breaks <- seq(0, 250, by = 50),
+                     labels = paste("$", prettyNum(breaks*1000, big.mark = ","))) +
+  scale_fill_discrete(name = "",
+                      labels = c("Households with BIPOC",
+                                 "Households without BIPOC")) +
+  scale_color_discrete(name = "",
+                      labels = c("Households with BIPOC",
+                                 "Households without BIPOC")) +
+  scale_linetype_discrete(name = "",
+                      labels = c("Households with BIPOC",
+                                 "Households without BIPOC"))
+```
